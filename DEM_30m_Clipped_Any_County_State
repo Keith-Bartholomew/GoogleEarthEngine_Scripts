@@ -1,0 +1,37 @@
+// Load a DEM dataset (e.g., SRTM)
+var dem = ee.Image("USGS/SRTMGL1_003");
+
+// Load the county boundaries (TIGER dataset)
+var counties = ee.FeatureCollection("TIGER/2018/Counties");
+
+// Set variables for the county and state
+var countyName = "Shasta"; // Change to your desired county
+var stateCode = "06"; // Change to your desired state (California = "06")
+
+// Filter the counties to get the specific county
+var county = counties.filter(ee.Filter.and(
+  ee.Filter.eq("NAME", countyName),
+  ee.Filter.eq("STATEFP", stateCode)
+));
+
+// Clip the DEM to the county boundary
+var demClipped = dem.clip(county);
+
+// Visualize the DEM
+var visParams = {
+  min: 0,
+  max: 3000,
+  palette: ['blue', 'green', 'yellow', 'brown', 'white']
+};
+Map.centerObject(county, 8);
+Map.addLayer(demClipped, visParams, "Clipped DEM");
+
+// Export the clipped DEM
+Export.image.toDrive({
+  image: demClipped,
+  description: countyName + "_County_DEM",
+  scale: 30, // SRTM resolution
+  region: county.geometry(),
+  crs: "EPSG:4326",
+  maxPixels: 1e13
+});
