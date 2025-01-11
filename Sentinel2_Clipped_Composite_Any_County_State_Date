@@ -1,0 +1,57 @@
+// Configuration: Change the state code, county name, and date range here
+var stateCode = '06'; // Example: '06' for California
+var countyName = 'Shasta'; // Example: 'Shasta'
+var startDate = '2023-06-01'; // Start of the month
+var endDate = '2023-06-30'; // End of the month
+
+// Step 1: Load and filter the county boundary
+var counties = ee.FeatureCollection('TIGER/2018/Counties');
+var selectedCounty = counties.filter(ee.Filter.and(
+  ee.Filter.eq('STATEFP', stateCode), // State code
+  ee.Filter.eq('NAME', countyName) // County name
+));
+
+// Add a small buffer to ensure full coverage (optional)
+var bufferedCounty = selectedCounty.geometry().buffer(1000); // 1 km buffer
+
+// Visualize the buffered county
+Map.centerObject(selectedCounty, 9);
+Map.addLayer(selectedCounty, {color: 'blue'}, countyName + ' Boundary');
+Map.addLayer(bufferedCounty, {color: 'red'}, countyName + ' Buffered Boundary');
+
+// Step 2: Filter Sentinel-2 images by the buffered county and one-month date range
+var sentinel2 = ee.ImageCollection('COPERNICUS/S2')
+  .filterBounds(bufferedCounty) // Use the buffered geometry for filtering
+  .filterDate(startDate, endDate) // One-month date range
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10)); // Cloud filter
+
+// Create a median composite for the county
+var sentinelComposite = sentinel2.median();
+
+// Clip the composite to the exact county boundary
+var clippedComposite = sentinelComposite.clip(selectedCounty.geometry());
+
+// Visualize the clipped composite
+Map.addLayer(clippedComposite, {bands: ['B4', 'B3', 'B2'], min: 0, max: 3000}, 'Clipped Sentinel-2 Composite');
+
+// Extract the month and year from the startDate
+var dateComponents = startDate.split('-');
+var year = dateComponents[0];
+var month = dateComponents[1]; // 01 for January, 02 for February, etc.
+
+// Step 3: Export the clipped composite as a single GeoTIFF
+Export.image.toDrive({
+  image: clippedComposite,
+  description: stateCode + '_' + countyName.replace(/\s+/g, '_') + '_Sentinel2_' + year + '_' + month,
+  folder: stateCode + '_' + countyName.replace(/\s+/g, '_') + '_Sentinel2_Exports',
+  scale: 10, // Resolution in meters
+  region: selectedCounty.geometry(), // Exact county boundary
+  maxPixels: 1e13,
+  fileFormat: 'GeoTIFF'
+});
+
+// Diagnostics for verification
+print('Selected County:', countyName);
+print('Selected State Code:', stateCode);
+print('Buffered County Geometry:', bufferedCounty);
+print('Date Range:', startDate + ' to ' + endDate);
