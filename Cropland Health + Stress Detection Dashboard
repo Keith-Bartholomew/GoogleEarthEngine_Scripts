@@ -1,0 +1,90 @@
+/*****************************************
+ * CROP HEALTH & STRESS DASHBOARD
+ * Sentinel-2 NDVI, NDRE, NDMI
+ * Outputs:
+ *  - Multi-index composites
+ *  - Anomaly detection vs. 5-year mean
+ *  - Time-series charts for user AOI
+ *****************************************/
+
+// ----------------------------
+// USER AOI
+// ----------------------------
+var aoi = ee.Geometry.Polygon([
+  [[-121.75, 38.1], [-121.7, 38.1], [-121.7, 38.05], [-121.75, 38.05]]
+]);
+Map.centerObject(aoi, 13);
+
+// ----------------------------
+// SENTINEL-2 CLEAN COLLECTION
+// ----------------------------
+var s2 = ee.ImageCollection("COPERNICUS/S2_SR")
+          .filterBounds(aoi)
+          .filterDate('2018-01-01', '2025-01-01')
+          .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+          .map(function(img){
+            return img.updateMask(img.select('SCL').neq(9))
+                      .divide(10000)
+                      .copyProperties(img, img.propertyNames());
+          });
+
+// ----------------------------
+// INDEX CALCULATION
+// ----------------------------
+function addIndices(img){
+  var ndvi = img.normalizedDifference(['B8','B4']).rename('NDVI');
+  var ndre = img.normalizedDifference(['B8','B5']).rename('NDRE');
+  var ndmi = img.normalizedDifference(['B8','B11']).rename('NDMI');
+  return img.addBands([ndvi, ndre, ndmi]);
+}
+
+var withIndices = s2.map(addIndices);
+
+// ----------------------------
+// MEAN BASELINE (5-year)
+// ----------------------------
+var baseline = withIndices.filterDate('2018-01-01', '2023-01-01')
+                          .mean()
+                          .select(['NDVI','NDRE','NDMI']);
+
+var latest = withIndices.filterDate('2024-01-01','2025-01-01').mean()
+                        .select(['NDVI','NDRE','NDMI']);
+
+// Anomaly = Latest - Baseline
+var anomalies = latest.subtract(baseline).rename(['NDVI_anom','NDRE_anom','NDMI_anom']);
+
+// ----------------------------
+// VISUALIZATION
+// ----------------------------
+Map.addLayer(latest.select('NDVI'), {min:0, max:0.8, palette:['red','yellow','green']},
+             'NDVI Latest');
+Map.addLayer(anomalies.select('NDVI_anom'),
+             {min:-0.3, max:0.3, palette:['red','white','green']},
+             'NDVI Anomaly');
+
+// ----------------------------
+// TIME SERIES CHART
+// ----------------------------
+var chart = ui.Chart.image.series({
+  imageCollection: withIndices.select('NDVI','NDRE','NDMI'),
+  region: aoi,
+  reducer: ee.Reducer.mean(),
+  scale: 10
+}).setOptions({
+  title: 'Crop Health Time Series',
+  lineWidth: 1,
+  vAxis: {title: 'Index Value'},
+  hAxis: {title: 'Date'}
+});
+
+print(chart);
+
+// ----------------------------
+// EXPORT OPTION
+// ----------------------------
+Export.image.toDrive({
+  image: anomalies,
+  description: 'CropHealth_Anomalies',
+  scale: 10,
+  region: aoi
+});
