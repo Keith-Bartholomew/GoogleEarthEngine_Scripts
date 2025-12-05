@@ -1,0 +1,68 @@
+/***************************************
+ * FLOW ACCUMULATION + WATERSHED TOOL
+ * Data: MERIT Hydro (or SRTM fallback)
+ * Outputs: Flow Dir, Flow Accum, Streams,
+ *          Watershed polygon for a pour point
+ * Author: Your Name
+ ****************************************/
+
+// ----------------------------
+// USER INPUTS
+// ----------------------------
+var aoi = ee.Geometry.Point([-121.5, 38.5]);   // Replace with your point
+var threshold = 200;                           // Flow accumulation threshold for streams
+
+// ----------------------------
+// DATASETS
+// ----------------------------
+var dem = ee.Image("MERIT/DEM/v1_0_3")
+             .select('dem')
+             .clip(aoi.buffer(5000));
+
+// Fallback: var dem = ee.Image("USGS/SRTMGL1_003");
+
+// ----------------------------
+// HYDRO TOOLS
+// ----------------------------
+var terrain = ee.Algorithms.Terrain(dem);
+var filled = dem.focal_min(1).focal_max(1);  // Depression fill (simple)
+var flowDir = ee.Algorithms.Hydrology.flowDirection(filled);
+
+// Flow accumulation
+var flowAccum = ee.Algorithms.Hydrology.flowAccumulation(flowDir);
+
+// Streams
+var streams = flowAccum.gt(threshold);
+
+// Pour point snapping (optional)
+var snapped = flowAccum.reduceNeighborhood({
+  reducer: ee.Reducer.max(),
+  kernel: ee.Kernel.circle(3)
+});
+var pourPoint = aoi;
+
+// Watershed delineation
+var watershed = ee.Algorithms.Hydrology.fillBasin(flowDir, pourPoint);
+
+// ----------------------------
+// VISUALIZATION
+// ----------------------------
+Map.centerObject(aoi, 12);
+
+Map.addLayer(flowAccum, {min:0, max:5000, palette:['white','blue']},
+             'Flow Accumulation');
+
+Map.addLayer(streams.updateMask(streams),
+             {palette:'cyan'}, 'Stream Network');
+
+Map.addLayer(watershed, {palette:'red'}, 'Watershed');
+
+// ----------------------------
+// EXPORT OPTIONS
+// ----------------------------
+Export.image.toDrive({
+  image: streams.selfMask(),
+  description: 'StreamNetwork',
+  scale: 30,
+  region: aoi.buffer(5000)
+});
