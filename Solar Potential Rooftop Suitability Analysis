@@ -1,0 +1,57 @@
+/********************************************
+ * SOLAR SUITABILITY MODEL
+ * Uses SRTM DEM → slope + aspect
+ * Adds NASA solar irradiance
+ * Output: Suitability Raster (0–1)
+ ********************************************/
+
+// ----------------------------
+// USER AOI
+// ----------------------------
+var aoi = ee.Geometry.Rectangle([-117.5, 33.1, -117.3, 33.3]);
+Map.centerObject(aoi, 12);
+
+// ----------------------------
+// DATASETS
+// ----------------------------
+var dem = ee.Image("USGS/SRTMGL1_003").clip(aoi);
+var solar = ee.Image("NASA/POWER/SR/SR").select('ALLSKY_SFC_SW_DWN')
+              .clip(aoi) // Global Horizontal Irradiance (kWh/m2/day)
+              .resample('bilinear');
+
+// ----------------------------
+// DERIVED TERRAIN
+// ----------------------------
+var terrain = ee.Algorithms.Terrain(dem);
+var slope = terrain.select('slope');
+var aspect = terrain.select('aspect');
+
+// Normalize inputs
+var normSlope = slope.divide(45).clamp(0,1).rename('slope_norm');
+var normSolar = solar.divide(10).clamp(0,1).rename('solar_norm'); // adjust regionally
+
+// Suitability = high solar + low slope + south-facing orientation
+var aspectScore = aspect.expression(
+  "(cos((aspect - 180) * 3.14159 / 180) + 1) / 2"
+).rename('aspect_score');
+
+var suitability = normSolar
+  .multiply(aspectScore)
+  .multiply(normSlope.multiply(-1).add(1))  // penalize high slope
+  .rename('solar_suitability');
+
+// ----------------------------
+// VISUALIZATION
+// ----------------------------
+Map.addLayer(suitability, {min:0, max:1, palette:['red','yellow','green']},
+             'Solar Suitability');
+
+// ----------------------------
+// EXPORT
+// ----------------------------
+Export.image.toDrive({
+  image: suitability,
+  description: 'SolarSuitability',
+  region: aoi,
+  scale: 30
+});
